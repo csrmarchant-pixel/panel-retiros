@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+@theme {
+  --color-redland-primary: #1c1b3b;
+  --color-redland-secondary: #c50227;
+  --color-redland-footer: #181818;
+}

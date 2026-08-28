@@ -5,6 +5,10 @@ import Monitor from './pages/Monitor';
 import Docente from './pages/Docente';
 import Admin from './pages/Admin';
 
+// 1. Importaciones de React-Toastify
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+
 function App() {
   return (
     <BrowserRouter>
@@ -29,6 +33,20 @@ function App() {
           &copy; {new Date().getFullYear()} Redland. Todos los derechos reservados.
         </footer>
       </div>
+
+      {/* 2. Contenedor global de notificaciones */}
+      <ToastContainer 
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored"
+      />
     </BrowserRouter>
   );
 }

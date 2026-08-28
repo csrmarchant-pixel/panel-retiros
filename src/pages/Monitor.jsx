@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase'; 
 import { collection, onSnapshot } from 'firebase/firestore';
+import { toast } from 'react-toastify';
 
 function Monitor() {
   const [retiros, setRetiros] = useState([]);
@@ -10,6 +11,19 @@ function Monitor() {
     const unsubscribe = onSnapshot(
       collection(db, 'pickup_events'),
       (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const data = change.doc.data();
+            
+            if (data.status === 'alert_duplicate') {
+              toast.error(`⚠️ ¡Atención! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
+                position: "top-right",
+                autoClose: 7000,
+              });
+            }
+          }
+        });
+
         const alumnosData = snapshot.docs.map((docItem) => ({
           id: docItem.id,
           ...docItem.data(),
@@ -26,8 +40,7 @@ function Monitor() {
     return () => unsubscribe();
   }, []);
 
-  // Separar pendientes y completados
-  const pendientes = retiros.filter(item => item.status !== 'completed');
+  const pendientes = retiros.filter(item => item.status !== 'completed' && item.status !== 'alert_duplicate');
   const completados = retiros.filter(item => item.status === 'completed');
 
   return (
@@ -54,7 +67,7 @@ function Monitor() {
         </div>
       ) : (
         <>
-          {/* SECCIÓN 1: EN ESPERA */}
+          {/* SECCIÓN 1: EN ESPERA (Tarjetas grandes para los que están en la puerta ahora) */}
           <div className="mb-10">
             <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
               <span className="h-3 w-3 rounded-full bg-redland-secondary inline-block"></span>
@@ -94,37 +107,55 @@ function Monitor() {
             )}
           </div>
 
-          {/* SECCIÓN 2: HISTORIAL DE RETIRADOS HOY (VERDES) */}
+          {/* SECCIÓN 2: HISTORIAL COMPACTO (Diseño de filas en tabla para alto volumen) */}
           {completados.length > 0 && (
             <div>
-              <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block"></span>
-                Historial de Retirados Hoy ({completados.length})
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {completados.map((item) => (
-                  <div key={item.id} className="bg-emerald-50/60 border-l-8 border-emerald-500 rounded-xl p-6 shadow-sm flex flex-col justify-between opacity-9 تھی۔">
-                    <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-emerald-100 text-emerald-800 text-xs font-extrabold px-3 py-1 rounded-full border border-emerald-200">
-                          {item.courseId || item.grade || item.curso}
-                        </span>
-                        <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">
-                          Entregado {item.deliveredAt?.toDate ? item.deliveredAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                        </span>
-                      </div>
-                      <h2 className="text-xl font-bold text-emerald-900 mb-2 leading-tight">
-                        {item.studentName || item.nombreAlumno}
-                      </h2>
-                      <div className="bg-white/80 rounded-lg p-3 mt-4 border border-emerald-100">
-                        <p className="text-xs text-emerald-600 uppercase font-semibold mb-1">Retirado por:</p>
-                        <p className="text-sm text-emerald-900 font-medium truncate">
-                          {item.tutorName || item.parentName || item.nombreApoderado}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-slate-700 flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block"></span>
+                  Historial de Retirados Hoy ({completados.length})
+                </h3>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="overflow-x-auto max-h-96">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 text-slate-500 uppercase text-xs sticky top-0 border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4 font-semibold">Hora</th>
+                        <th className="py-3 px-4 font-semibold">Curso</th>
+                        <th className="py-3 px-4 font-semibold">Alumno</th>
+                        <th className="py-3 px-4 font-semibold">Retirado por</th>
+                        <th className="py-3 px-4 font-semibold text-right">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-sm">
+                      {completados.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">
+                            {item.deliveredAt?.toDate ? item.deliveredAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-md">
+                              {item.courseId || item.grade || item.curso}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-bold text-slate-800">
+                            {item.studentName || item.nombreAlumno}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600">
+                            {item.tutorName || item.parentName || item.nombreApoderado}
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold px-2.5 py-1 rounded-full">
+                              ✓ Despachado
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}

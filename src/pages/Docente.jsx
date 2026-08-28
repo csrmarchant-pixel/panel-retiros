@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { toast } from 'react-toastify';
 
 function Docente() {
   const [retiros, setRetiros] = useState([]);
@@ -11,6 +12,23 @@ function Docente() {
     const unsubscribe = onSnapshot(
       collection(db, 'pickup_events'),
       (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const data = change.doc.data();
+            
+            if (data.status === 'alert_duplicate') {
+              toast.error(`⚠️ ¡Atención Docente! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
+                position: "top-right",
+                autoClose: 7000,
+                hideProgressBar: false,
+                closeOnClick: true,
+                pauseOnHover: true,
+                draggable: true,
+              });
+            }
+          }
+        });
+
         const alumnosData = snapshot.docs.map((docItem) => ({
           id: docItem.id,
           ...docItem.data(),
@@ -40,7 +58,8 @@ function Docente() {
     }
   };
 
-  const pendientes = retiros.filter(item => item.status !== 'completed');
+  const alertasDuplicadas = retiros.filter(item => item.status === 'alert_duplicate');
+  const pendientes = retiros.filter(item => item.status !== 'completed' && item.status !== 'alert_duplicate');
   const completados = retiros.filter(item => item.status === 'completed');
 
   const cursosDisponibles = ['TODOS', ...new Set(retiros.map(item => item.courseId || item.grade || item.curso || 'General').filter(Boolean))];
@@ -53,6 +72,7 @@ function Docente() {
 
   return (
     <div className="w-full h-full animate-fade-in pb-12">
+      {/* Cabecera */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h2 className="text-2xl font-bold text-redland-primary">Panel de Gestión Docente</h2>
@@ -83,83 +103,132 @@ function Docente() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-redland-secondary"></div>
         </div>
       ) : (
-        <>
-          {/* SECCIÓN PENDIENTES */}
-          <div className="mb-12">
-            <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-redland-secondary inline-block"></span>
-              Alumnos en Espera de Retiro ({pendientesFiltrados.length})
-            </h3>
+        /* LAYOUT DE DOS COLUMNAS: Izquierda (Dashboard principal) | Derecha (Panel de Alertas) */
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          
+          {/* COLUMNA PRINCIPAL (Ocupa 3 espacios en pantallas grandes) */}
+          <div className="lg:col-span-3 space-y-10">
+            
+            {/* SECCIÓN PENDIENTES */}
+            <div>
+              <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-redland-secondary inline-block"></span>
+                Alumnos en Espera de Retiro ({pendientesFiltrados.length})
+              </h3>
 
-            {pendientesFiltrados.length === 0 ? (
-              <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center shadow-sm">
-                <p className="text-slate-400">No hay alumnos en espera para el filtro seleccionado.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {pendientesFiltrados.map((item) => (
-                  <div key={item.id} className="bg-white border-t-4 border-redland-primary rounded-xl p-6 shadow-md flex flex-col justify-between hover:shadow-lg transition-shadow">
-                    <div className="mb-6">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-slate-100 text-redland-primary text-xs font-bold px-3 py-1 rounded-md border border-slate-200">
-                          {item.courseId || item.grade || item.curso || 'General'}
-                        </span>
+              {pendientesFiltrados.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center shadow-sm">
+                  <p className="text-slate-400">No hay alumnos en espera para el filtro seleccionado.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {pendientesFiltrados.map((item) => (
+                    <div key={item.id} className="bg-white border-t-4 border-redland-primary rounded-xl p-6 shadow-md flex flex-col justify-between hover:shadow-lg transition-shadow">
+                      <div className="mb-6">
+                        <div className="flex justify-between items-start mb-4">
+                          <span className="bg-slate-100 text-redland-primary text-xs font-bold px-3 py-1 rounded-md border border-slate-200">
+                            {item.courseId || item.grade || item.curso || 'General'}
+                          </span>
+                        </div>
+                        <h2 className="text-xl font-bold text-slate-800 mb-1">
+                          {item.studentName || item.nombreAlumno}
+                        </h2>
+                        <p className="text-sm text-slate-500">
+                          Retira: <span className="font-semibold text-slate-700">{item.tutorName || item.parentName || item.nombreApoderado}</span>
+                        </p>
                       </div>
-                      <h2 className="text-xl font-bold text-slate-800 mb-1">
-                        {item.studentName || item.nombreAlumno}
-                      </h2>
-                      <p className="text-sm text-slate-500">
-                        Retira: <span className="font-semibold text-slate-700">{item.tutorName || item.parentName || item.nombreApoderado}</span>
-                      </p>
-                    </div>
 
-                    <button
-                      onClick={() => entregarAlumno(item.id)}
-                      className="w-full bg-redland-secondary hover:bg-red-800 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                      </svg>
-                      Despachar Alumno
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() => entregarAlumno(item.id)}
+                        className="w-full bg-redland-secondary hover:bg-red-800 text-white font-semibold py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Despachar Alumno
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN HISTORIAL DIARIO (VERDES) */}
+            {completados.length > 0 && (
+              <div>
+                <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block"></span>
+                  Historial de Alumnos Ya Retirados Hoy ({completados.length})
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {completados.map((item) => (
+                    <div key={item.id} className="bg-emerald-50/60 border-t-4 border-emerald-500 rounded-xl p-6 shadow-sm flex flex-col justify-between opacity-90">
+                      <div>
+                        <div className="flex justify-between items-start mb-4">
+                          <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-md border border-emerald-200">
+                            {item.courseId || item.grade || item.curso}
+                          </span>
+                          <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">
+                            Despachado
+                          </span>
+                        </div>
+                        <h2 className="text-xl font-bold text-emerald-900 mb-1">
+                          {item.studentName || item.nombreAlumno}
+                        </h2>
+                        <p className="text-sm text-emerald-700">
+                          Retirado por: <span className="font-semibold text-emerald-900">{item.tutorName || item.parentName || item.nombreApoderado}</span>
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
 
-          {/* SECCIÓN HISTORIAL DIARIO (VERDES) */}
-          {completados.length > 0 && (
-            <div>
-              <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-emerald-500 inline-block"></span>
-                Historial de Alumnos Ya Retirados Hoy ({completados.length})
+          {/* COLUMNA LATERAL DERECHA: ALERTAS DE DUPLICADOS (Ocupa 1 espacio, apiladas hacia abajo) */}
+          <div className="lg:col-span-1">
+            <div className="sticky top-6 bg-red-50/80 border border-red-200 rounded-2xl p-4 shadow-sm">
+              <h3 className="text-sm font-bold text-red-700 mb-4 flex items-center gap-2 uppercase tracking-wide">
+                <span className="h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse inline-block"></span>
+                ⚠️ Alertas Duplicadas ({alertasDuplicadas.length})
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {completados.map((item) => (
-                  <div key={item.id} className="bg-emerald-50/60 border-t-4 border-emerald-500 rounded-xl p-6 shadow-sm flex flex-col justify-between opacity-90">
-                    <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-md border border-emerald-200">
-                          {item.courseId || item.grade || item.curso}
-                        </span>
-                        <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">
-                          Despachado
-                        </span>
+
+              {alertasDuplicadas.length === 0 ? (
+                <div className="bg-white/60 border border-red-100 rounded-xl p-4 text-center">
+                  <p className="text-xs text-slate-400">Sin duplicados hoy.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-4 max-h-[calc(100vh-200px)] overflow-y-auto pr-1">
+                  {alertasDuplicadas.map((item) => (
+                    <div key={item.id} className="bg-white border-l-4 border-red-600 rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded border border-red-200">
+                            {item.courseId || item.grade || item.curso || 'General'}
+                          </span>
+                          <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
+                            {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
+                          </span>
+                        </div>
+                        <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">
+                          {item.studentName || item.nombreAlumno}
+                        </h4>
+                        <p className="text-xs text-slate-500 mb-2">
+                          Intento: <span className="font-semibold text-red-700">{item.tutorName || item.parentName || item.nombreApoderado}</span>
+                        </p>
+                        <p className="text-[11px] text-red-600 font-medium bg-red-50 p-2 rounded border border-red-100">
+                          Tarjeta pasada previamente hoy.
+                        </p>
                       </div>
-                      <h2 className="text-xl font-bold text-emerald-900 mb-1">
-                        {item.studentName || item.nombreAlumno}
-                      </h2>
-                      <p className="text-sm text-emerald-700">
-                        Retirado por: <span className="font-semibold text-emerald-900">{item.tutorName || item.parentName || item.nombreApoderado}</span>
-                      </p>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </>
+          </div>
+
+        </div>
       )}
     </div>
   );

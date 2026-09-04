@@ -272,15 +272,27 @@ function Admin() {
                               {item.courseId || 'General'}
                             </span>
                           </td>
-                          <td className="p-3 font-bold text-slate-800">{item.studentName}</td>
-                          <td className="p-3 text-slate-600">{item.tutorName}</td>
+                          <td className="p-3 font-bold text-slate-800">
+                            {item.studentName || (item.status === 'unrecognized' ? '—' : 'Sin dato')}
+                          </td>
+                          <td className="p-3 text-slate-600">
+                            {item.status === 'unrecognized'
+                              ? <span className="font-mono text-xs">Tarjeta {item.cardNo || '—'}</span>
+                              : (item.tutorName || 'Sin dato')}
+                          </td>
                           <td className="p-3">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
                               item.status === 'completed' ? 'bg-emerald-100 text-emerald-800' :
                               item.status === 'alert_duplicate' ? 'bg-red-100 text-red-800 font-bold' :
+                              item.status === 'blocked_attempt' ? 'bg-red-200 text-red-900 font-bold' :
+                              item.status === 'unrecognized' ? 'bg-slate-200 text-slate-700 font-bold' :
                               'bg-amber-100 text-amber-800'
                             }`}>
-                              {item.status === 'completed' ? '✓ Despachado' : item.status === 'alert_duplicate' ? '⚠️ Duplicado' : 'En Espera'}
+                              {item.status === 'completed' ? '✓ Despachado' :
+                               item.status === 'alert_duplicate' ? '⚠️ Duplicado' :
+                               item.status === 'blocked_attempt' ? '🚫 Tarjeta bloqueada' :
+                               item.status === 'unrecognized' ? '❓ No reconocida' :
+                               'En Espera'}
                             </span>
                           </td>
                         </tr>

@@ -1,33 +1,71 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { toast } from 'react-toastify';
+
+// Debe calzar con el formato que genera n8n: dd-MM-yyyy en America/Santiago
+function getTodayDateString() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Santiago',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(new Date());
+  const day = parts.find((p) => p.type === 'day').value;
+  const month = parts.find((p) => p.type === 'month').value;
+  const year = parts.find((p) => p.type === 'year').value;
+  return `${day}-${month}-${year}`;
+}
 
 function Docente() {
   const [retiros, setRetiros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtroCurso, setFiltroCurso] = useState('TODOS');
+  const isFirstSnapshot = useRef(true);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(
+    const todayQuery = query(
       collection(db, 'pickup_events'),
+      where('dateString', '==', getTodayDateString())
+    );
+
+    const unsubscribe = onSnapshot(
+      todayQuery,
       (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === "added") {
-            const data = change.doc.data();
-            
-            if (data.status === 'alert_duplicate') {
-              toast.error(`⚠️ ¡Atención Docente! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
-                position: "top-right",
-                autoClose: 7000,
-                hideProgressBar: false,
-                closeOnClick: true,
-                pauseOnHover: true,
-                draggable: true,
-              });
+        // Evita que la primera carga (con todo lo de hoy) dispare toasts
+        // como si fueran eventos recién ocurridos.
+        if (!isFirstSnapshot.current) {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+              const data = change.doc.data();
+
+              if (data.status === 'alert_duplicate') {
+                toast.error(`⚠️ ¡Atención Docente! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
+                  position: "top-right",
+                  autoClose: 7000,
+                  hideProgressBar: false,
+                  closeOnClick: true,
+                  pauseOnHover: true,
+                  draggable: true,
+                });
+              }
+
+              if (data.status === 'blocked_attempt') {
+                toast.error(`🚫 Tarjeta BLOQUEADA usada en portería: ${data.tutorName || 'apoderado desconocido'} (alumno: ${data.studentName || 'sin identificar'}).`, {
+                  position: "top-right",
+                  autoClose: false,
+                });
+              }
+
+              if (data.status === 'unrecognized') {
+                toast.warning(`❓ Tarjeta no reconocida en el lector (código ${data.cardNo || '—'}).`, {
+                  position: "top-right",
+                  autoClose: 7000,
+                });
+              }
             }
-          }
-        });
+          });
+        }
 
         const alumnosData = snapshot.docs.map((docItem) => ({
           id: docItem.id,
@@ -35,6 +73,7 @@ function Docente() {
         }));
         setRetiros(alumnosData);
         setLoading(false);
+        isFirstSnapshot.current = false;
       },
       (error) => {
         console.error("Error al escuchar Firestore:", error);
@@ -59,7 +98,9 @@ function Docente() {
   };
 
   const alertasDuplicadas = retiros.filter(item => item.status === 'alert_duplicate');
-  const pendientes = retiros.filter(item => item.status !== 'completed' && item.status !== 'alert_duplicate');
+  const alertasSeguridad = retiros.filter(item => item.status === 'blocked_attempt' || item.status === 'unrecognized');
+  const todasLasAlertas = [...alertasDuplicadas, ...alertasSeguridad];
+  const pendientes = retiros.filter(item => item.status === 'waiting');
   const completados = retiros.filter(item => item.status === 'completed');
 
   const cursosDisponibles = ['TODOS', ...new Set(retiros.map(item => item.courseId || item.grade || item.curso || 'General').filter(Boolean))];
@@ -131,10 +172,10 @@ function Docente() {
                           </span>
                         </div>
                         <h2 className="text-xl font-bold text-slate-800 mb-1">
-                          {item.studentName || item.nombreAlumno}
+                          {item.studentName}
                         </h2>
                         <p className="text-sm text-slate-500">
-                          Retira: <span className="font-semibold text-slate-700">{item.tutorName || item.parentName || item.nombreApoderado}</span>
+                          Retira: <span className="font-semibold text-slate-700">{item.tutorName}</span>
                         </p>
                       </div>
 
@@ -173,10 +214,10 @@ function Docente() {
                           </span>
                         </div>
                         <h2 className="text-xl font-bold text-emerald-900 mb-1">
-                          {item.studentName || item.nombreAlumno}
+                          {item.studentName}
                         </h2>
                         <p className="text-sm text-emerald-700">
-                          Retirado por: <span className="font-semibold text-emerald-900">{item.tutorName || item.parentName || item.nombreApoderado}</span>
+                          Retirado por: <span className="font-semibold text-emerald-900">{item.tutorName}</span>
                         </p>
                       </div>
                     </div>
@@ -186,40 +227,59 @@ function Docente() {
             )}
           </div>
 
-          {/* COLUMNA LATERAL DERECHA: ALERTAS DE DUPLICADOS (Ocupa 1 espacio, apiladas hacia abajo) */}
+          {/* COLUMNA LATERAL DERECHA: ALERTAS (duplicados, tarjetas bloqueadas, no reconocidas) */}
           <div className="lg:col-span-1">
             <div className="sticky top-6 bg-red-50/80 border border-red-200 rounded-2xl p-4 shadow-sm">
               <h3 className="text-sm font-bold text-red-700 mb-4 flex items-center gap-2 uppercase tracking-wide">
                 <span className="h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse inline-block"></span>
-                ⚠️ Alertas Duplicadas ({alertasDuplicadas.length})
+                ⚠️ Alertas ({todasLasAlertas.length})
               </h3>
 
-              {alertasDuplicadas.length === 0 ? (
+              {todasLasAlertas.length === 0 ? (
                 <div className="bg-white/60 border border-red-100 rounded-xl p-4 text-center">
-                  <p className="text-xs text-slate-400">Sin duplicados hoy.</p>
+                  <p className="text-xs text-slate-400">Sin alertas hoy.</p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-4 max-h-[calc(100vh-200px)] overflow-y-auto pr-1">
-                  {alertasDuplicadas.map((item) => (
+                  {todasLasAlertas.map((item) => (
                     <div key={item.id} className="bg-white border-l-4 border-red-600 rounded-xl p-4 shadow-sm flex flex-col justify-between">
                       <div>
                         <div className="flex justify-between items-start mb-2">
-                          <span className="bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded border border-red-200">
-                            {item.courseId || item.grade || item.curso || 'General'}
+                          <span className="bg-red-100 text-red-800 text-[10px] font-bold px-2 py-0.5 rounded border border-red-200 uppercase">
+                            {item.status === 'blocked_attempt' && '🚫 Bloqueada'}
+                            {item.status === 'unrecognized' && '❓ No reconocida'}
+                            {item.status === 'alert_duplicate' && (item.courseId || item.grade || item.curso || 'General')}
                           </span>
                           <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded">
                             {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
                           </span>
                         </div>
-                        <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">
-                          {item.studentName || item.nombreAlumno}
-                        </h4>
-                        <p className="text-xs text-slate-500 mb-2">
-                          Intento: <span className="font-semibold text-red-700">{item.tutorName || item.parentName || item.nombreApoderado}</span>
-                        </p>
-                        <p className="text-[11px] text-red-600 font-medium bg-red-50 p-2 rounded border border-red-100">
-                          Tarjeta pasada previamente hoy.
-                        </p>
+
+                        {item.status === 'unrecognized' ? (
+                          <>
+                            <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">Tarjeta no registrada</h4>
+                            <p className="text-xs text-slate-500 mb-2">
+                              Código: <span className="font-semibold text-red-700">{item.cardNo || '—'}</span>
+                            </p>
+                            <p className="text-[11px] text-red-600 font-medium bg-red-50 p-2 rounded border border-red-100">
+                              No corresponde a ningún apoderado del padrón.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">
+                              {item.studentName}
+                            </h4>
+                            <p className="text-xs text-slate-500 mb-2">
+                              Intento: <span className="font-semibold text-red-700">{item.tutorName}</span>
+                            </p>
+                            <p className="text-[11px] text-red-600 font-medium bg-red-50 p-2 rounded border border-red-100">
+                              {item.status === 'blocked_attempt'
+                                ? 'Tarjeta marcada como bloqueada en el padrón.'
+                                : 'Tarjeta pasada previamente hoy.'}
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}

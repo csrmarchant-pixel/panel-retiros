@@ -1,28 +1,66 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase'; 
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { toast } from 'react-toastify';
+
+// Debe calzar con el formato que genera n8n: dd-MM-yyyy en America/Santiago
+function getTodayDateString() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Santiago',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(new Date());
+  const day = parts.find((p) => p.type === 'day').value;
+  const month = parts.find((p) => p.type === 'month').value;
+  const year = parts.find((p) => p.type === 'year').value;
+  return `${day}-${month}-${year}`;
+}
 
 function Monitor() {
   const [retiros, setRetiros] = useState([]);
   const [loading, setLoading] = useState(true);
+  const isFirstSnapshot = useRef(true);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(
+    const todayQuery = query(
       collection(db, 'pickup_events'),
+      where('dateString', '==', getTodayDateString())
+    );
+
+    const unsubscribe = onSnapshot(
+      todayQuery,
       (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === "added") {
-            const data = change.doc.data();
-            
-            if (data.status === 'alert_duplicate') {
-              toast.error(`⚠️ ¡Atención! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
-                position: "top-right",
-                autoClose: 7000,
-              });
+        // Evita que la primera carga (con todo el historial de hoy) dispare
+        // toasts como si fueran eventos nuevos recién ocurridos.
+        if (!isFirstSnapshot.current) {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+              const data = change.doc.data();
+
+              if (data.status === 'alert_duplicate') {
+                toast.error(`⚠️ ¡Atención! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
+                  position: "top-right",
+                  autoClose: 7000,
+                });
+              }
+
+              if (data.status === 'blocked_attempt') {
+                toast.error(`🚫 Tarjeta BLOQUEADA usada en portería: ${data.tutorName || 'apoderado desconocido'} (alumno: ${data.studentName || 'sin identificar'}).`, {
+                  position: "top-right",
+                  autoClose: false,
+                });
+              }
+
+              if (data.status === 'unrecognized') {
+                toast.warning(`❓ Tarjeta no reconocida en el lector (código ${data.cardNo || '—'}). No corresponde a ningún apoderado registrado.`, {
+                  position: "top-right",
+                  autoClose: 7000,
+                });
+              }
             }
-          }
-        });
+          });
+        }
 
         const alumnosData = snapshot.docs.map((docItem) => ({
           id: docItem.id,
@@ -30,6 +68,7 @@ function Monitor() {
         }));
         setRetiros(alumnosData);
         setLoading(false);
+        isFirstSnapshot.current = false;
       },
       (error) => {
         console.error("Error al escuchar Firestore:", error);
@@ -40,7 +79,8 @@ function Monitor() {
     return () => unsubscribe();
   }, []);
 
-  const pendientes = retiros.filter(item => item.status !== 'completed' && item.status !== 'alert_duplicate');
+  const alertas = retiros.filter(item => item.status === 'blocked_attempt' || item.status === 'unrecognized');
+  const pendientes = retiros.filter(item => item.status === 'waiting');
   const completados = retiros.filter(item => item.status === 'completed');
 
   return (
@@ -67,6 +107,49 @@ function Monitor() {
         </div>
       ) : (
         <>
+          {/* SECCIÓN 0: ALERTAS DE SEGURIDAD (tarjetas bloqueadas o no reconocidas) */}
+          {alertas.length > 0 && (
+            <div className="mb-10">
+              <h3 className="text-lg font-bold text-red-700 mb-4 flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-red-600 inline-block animate-pulse"></span>
+                Alertas de Seguridad ({alertas.length})
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {alertas.map((item) => (
+                  <div key={item.id} className="bg-red-50 border-l-8 border-red-600 rounded-xl p-6 shadow-md">
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="bg-red-600 text-white text-xs font-extrabold px-3 py-1 rounded-full uppercase">
+                        {item.status === 'blocked_attempt' ? '🚫 Tarjeta bloqueada' : '❓ Tarjeta no reconocida'}
+                      </span>
+                      <span className="text-xs font-semibold text-red-400 bg-white px-2 py-1 rounded">
+                        {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
+                      </span>
+                    </div>
+
+                    {item.status === 'blocked_attempt' ? (
+                      <>
+                        <h2 className="text-xl font-bold text-red-900 mb-1">{item.studentName || 'Alumno sin identificar'}</h2>
+                        <p className="text-sm text-red-700">
+                          Intentó retirar: <strong>{item.tutorName || 'Apoderado desconocido'}</strong>
+                        </p>
+                        {item.courseId && <p className="text-xs text-red-500 mt-1">{item.courseId}</p>}
+                      </>
+                    ) : (
+                      <>
+                        <h2 className="text-xl font-bold text-red-900 mb-1">Tarjeta no registrada</h2>
+                        <p className="text-sm text-red-700">
+                          Código de tarjeta: <strong>{item.cardNo || '—'}</strong>
+                        </p>
+                        <p className="text-xs text-red-500 mt-1">ID leído: {item.employeeNoString || '—'}</p>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* SECCIÓN 1: EN ESPERA (Tarjetas grandes para los que están en la puerta ahora) */}
           <div className="mb-10">
             <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">

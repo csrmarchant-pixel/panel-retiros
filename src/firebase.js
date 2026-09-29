@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 // Configuración de tu proyecto de Firebase
 // (Puedes reemplazar estos valores con los de tu consola de Firebase cuando los tengas listos)
@@ -15,5 +16,6 @@ const firebaseConfig = {
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
 
-// Inicializar y exportar Firestore para usarlo en el proyecto
+// Inicializar y exportar Firestore y Auth para usarlos en el proyecto
 export const db = getFirestore(app);
+export const auth = getAuth(app);

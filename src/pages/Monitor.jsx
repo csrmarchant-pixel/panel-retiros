@@ -112,10 +112,7 @@ function Monitor() {
                 {pendientes.map((item) => (
                   <div key={item.id} className="bg-white border-l-8 border-redland-secondary rounded-xl p-6 shadow-md flex flex-col justify-between">
                     <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-slate-100 text-redland-primary text-xs font-extrabold px-3 py-1 rounded-full border border-slate-200">
-                          {item.courseId || item.grade || item.curso || 'CURSO NO ASIGNADO'}
-                        </span>
+                      <div className="flex justify-end items-start mb-4">
                         <span className="text-xs font-semibold text-slate-400 bg-slate-50 px-2 py-1 rounded">
                           {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
                         </span>
@@ -152,7 +149,6 @@ function Monitor() {
                     <thead className="bg-slate-50 text-slate-500 uppercase text-xs sticky top-0 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4 font-semibold">Hora</th>
-                        <th className="py-3 px-4 font-semibold">Curso</th>
                         <th className="py-3 px-4 font-semibold">Alumno</th>
                         <th className="py-3 px-4 font-semibold">Retirado por</th>
                         <th className="py-3 px-4 font-semibold text-right">Estado</th>
@@ -163,11 +159,6 @@ function Monitor() {
                         <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">
                             {item.deliveredAt?.toDate ? item.deliveredAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-md">
-                              {item.courseId || item.grade || item.curso}
-                            </span>
                           </td>
                           <td className="py-3 px-4 font-bold text-slate-800">
                             {item.studentName || item.nombreAlumno}

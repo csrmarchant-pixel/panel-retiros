@@ -3,7 +3,6 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 // Configuración de tu proyecto de Firebase
-// (Puedes reemplazar estos valores con los de tu consola de Firebase cuando los tengas listos)
 const firebaseConfig = {
   apiKey: "AIzaSyBJAD9_ALQOfsAgEZW9By5Z7DJHuKZQ86s",
   authDomain: "retiro-alumnos.firebaseapp.com",

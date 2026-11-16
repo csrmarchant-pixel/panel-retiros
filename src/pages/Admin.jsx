@@ -112,6 +112,28 @@ function Admin() {
       return;
     }
 
+    const tutorIdNuevo = formData.tutorId.trim();
+    const tutorNameNuevo = formData.tutorName.trim().toLowerCase();
+
+    // Mismo tutorId + mismo apoderado = hermanos, es válido y esperado.
+    // Mismo tutorId + apoderado DISTINTO = casi siempre un error de tipeo
+    // (o un choque real entre dos familias) — no lo bloqueo solo, pero
+    // exijo una confirmación explícita antes de guardar.
+    const colisionConOtroApoderado = usuarios.find((u) =>
+      u.id !== editandoId &&
+      (u.tutorId || '').trim() === tutorIdNuevo &&
+      (u.tutorName || '').trim().toLowerCase() !== tutorNameNuevo
+    );
+
+    if (colisionConOtroApoderado) {
+      const continuar = window.confirm(
+        `⚠️ El ID de Apoderado "${tutorIdNuevo}" ya está asignado a "${colisionConOtroApoderado.tutorName}" (alumno: ${colisionConOtroApoderado.name}).\n\n` +
+        `Si es un error de tipeo, cancela y corrige el ID. Si de verdad corresponde a un apoderado distinto, su tarjeta abrirá el expediente del alumno equivocado.\n\n` +
+        `¿Guardar de todas formas?`
+      );
+      if (!continuar) return;
+    }
+
     try {
       if (editandoId) {
         const docRef = doc(db, 'students', editandoId);
@@ -258,7 +280,39 @@ function Admin() {
         return { ...row, _valid: errores.length === 0, _errores: errores };
       });
 
-      setCsvRows(filas);
+      // Mismo tutorId + mismo apoderado = hermanos, se permite (es común
+      // importar a varios hermanos juntos en el mismo CSV). Mismo tutorId +
+      // apoderado DISTINTO = probable error de tipeo o choque entre familias.
+      // Como el CSV se importa en lote sin que nadie revise fila por fila,
+      // esto se bloquea directo en vez de solo advertir.
+      const tutorNamePorId = {};
+      usuarios.forEach((u) => {
+        const id = (u.tutorId || '').trim();
+        if (id) tutorNamePorId[id] = (tutorNamePorId[id] || new Set());
+        if (id) tutorNamePorId[id].add((u.tutorName || '').trim().toLowerCase());
+      });
+      filas.forEach((fila) => {
+        const id = fila.tutorId.trim();
+        const nombre = fila.tutorName.trim().toLowerCase();
+        if (!id || !nombre) return;
+        if (!tutorNamePorId[id]) tutorNamePorId[id] = new Set();
+        tutorNamePorId[id].add(nombre);
+      });
+
+      const filasConValidacionCruzada = filas.map((fila) => {
+        const id = fila.tutorId.trim();
+        const nombre = fila.tutorName.trim().toLowerCase();
+        if (!id || !nombre) return fila;
+
+        const nombresParaEseId = tutorNamePorId[id];
+        if (nombresParaEseId && nombresParaEseId.size > 1) {
+          const errores = [...fila._errores, `tutorId "${id}" usado con más de un nombre de apoderado distinto`];
+          return { ...fila, _valid: false, _errores: errores };
+        }
+        return fila;
+      });
+
+      setCsvRows(filasConValidacionCruzada);
       setShowImportModal(true);
     };
     reader.readAsText(file, 'UTF-8');

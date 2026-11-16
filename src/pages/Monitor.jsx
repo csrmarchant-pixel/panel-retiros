@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase'; 
+import { db, auth } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { toast } from 'react-toastify';
 
 // Debe calzar con el formato que genera n8n: dd-MM-yyyy en America/Santiago
@@ -21,65 +22,128 @@ function Monitor() {
   const [retiros, setRetiros] = useState([]);
   const [loading, setLoading] = useState(true);
   const isFirstSnapshot = useRef(true);
+  const audioCtxRef = useRef(null);
 
+  // Se crea el AudioContext apenas carga la página, sin pedirle nada a nadie.
+  // El sonido depende 100% de que el navegador del kiosco esté configurado
+  // para permitir audio sin gesto humano (Fully Kiosk Browser con esa opción,
+  // o Chrome lanzado con --autoplay-policy=no-user-gesture-required). Si no
+  // lo está, el contexto queda "suspended" y los tonos simplemente no suenan
+  // — sin ningún aviso en pantalla, a propósito: Monitor es un kiosco sin
+  // intervención humana, no debe pedirle nada a nadie.
   useEffect(() => {
-    const todayQuery = query(
-      collection(db, 'pickup_events'),
-      where('dateString', '==', getTodayDateString())
-    );
-
-    const unsubscribe = onSnapshot(
-      todayQuery,
-      (snapshot) => {
-        // Evita que la primera carga (con todo el historial de hoy) dispare
-        // toasts como si fueran eventos nuevos recién ocurridos.
-        if (!isFirstSnapshot.current) {
-          snapshot.docChanges().forEach((change) => {
-            if (change.type === "added") {
-              const data = change.doc.data();
-
-              if (data.status === 'alert_duplicate') {
-                toast.error(`⚠️ ¡Atención! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
-                  position: "top-right",
-                  autoClose: 7000,
-                });
-              }
-
-              if (data.status === 'blocked_attempt') {
-                toast.error(`🚫 Tarjeta BLOQUEADA usada en portería: ${data.tutorName || 'apoderado desconocido'} (alumno: ${data.studentName || 'sin identificar'}).`, {
-                  position: "top-right",
-                  autoClose: false,
-                });
-              }
-
-              if (data.status === 'unrecognized') {
-                toast.warning(`❓ Tarjeta no reconocida en el lector (código ${data.cardNo || '—'}). No corresponde a ningún apoderado registrado.`, {
-                  position: "top-right",
-                  autoClose: 7000,
-                });
-              }
-            }
-          });
-        }
-
-        const alumnosData = snapshot.docs.map((docItem) => ({
-          id: docItem.id,
-          ...docItem.data(),
-        }));
-        setRetiros(alumnosData);
-        setLoading(false);
-        isFirstSnapshot.current = false;
-      },
-      (error) => {
-        console.error("Error al escuchar Firestore:", error);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
+    try {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (error) {
+      console.error('No se pudo inicializar el audio:', error);
+    }
   }, []);
 
-  const alertas = retiros.filter(item => item.status === 'blocked_attempt' || item.status === 'unrecognized');
+  // tono simple generado con Web Audio API — no necesita ningún archivo de audio.
+  const tocarTono = (frecuencia, duracionMs, inicioMs = 0, volumen = 0.25) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    const oscilador = ctx.createOscillator();
+    const ganancia = ctx.createGain();
+    oscilador.connect(ganancia);
+    ganancia.connect(ctx.destination);
+
+    oscilador.frequency.value = frecuencia;
+    oscilador.type = 'sine';
+    ganancia.gain.value = volumen;
+
+    const inicio = ctx.currentTime + inicioMs / 1000;
+    oscilador.start(inicio);
+    oscilador.stop(inicio + duracionMs / 1000);
+  };
+
+  // Retiro normal: "ding-dong" ascendente, corto y agradable.
+  const sonidoCheckinExitoso = () => {
+    tocarTono(880, 160, 0);
+    tocarTono(1320, 220, 150);
+  };
+
+  // Tarjeta bloqueada / no reconocida / duplicado: tono grave y doble, más urgente.
+  const sonidoAlerta = () => {
+    tocarTono(300, 220, 0, 0.3);
+    tocarTono(300, 220, 300, 0.3);
+  };
+
+  useEffect(() => {
+    let unsubscribeSnapshot = null;
+
+    const iniciarEscucha = () => {
+      const todayQuery = query(
+        collection(db, 'pickup_events'),
+        where('dateString', '==', getTodayDateString()),
+        where('status', 'in', ['waiting', 'completed', 'alert_duplicate'])
+      );
+
+      return onSnapshot(
+        todayQuery,
+        (snapshot) => {
+          // Evita que la primera carga (con todo el historial de hoy) dispare
+          // toasts como si fueran eventos nuevos recién ocurridos.
+          if (!isFirstSnapshot.current) {
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === "added") {
+                const data = change.doc.data();
+
+                if (data.status === 'waiting') {
+                  sonidoCheckinExitoso();
+                }
+
+                if (data.status === 'alert_duplicate') {
+                  sonidoAlerta();
+                  toast.error(`⚠️ ¡Atención! El apoderado ${data.tutorName || 'Desconocido'} ya retiró su tarjeta hoy para el alumno ${data.studentName || 'Estudiante'}.`, {
+                    position: "top-right",
+                    autoClose: 7000,
+                  });
+                }
+              }
+            });
+          }
+
+          const alumnosData = snapshot.docs.map((docItem) => ({
+            id: docItem.id,
+            ...docItem.data(),
+          }));
+          setRetiros(alumnosData);
+          setLoading(false);
+          isFirstSnapshot.current = false;
+        },
+        (error) => {
+          console.error("Error al escuchar Firestore:", error);
+          setLoading(false);
+        }
+      );
+    };
+
+    // Monitor es un kiosco: nadie va a iniciar sesión manualmente en el
+    // televisor de portería. Por eso se autentica solo, de forma anónima,
+    // apenas carga la página — sin pantalla de login ni intervención humana.
+    // Una vez que hay sesión (la anónima persiste sola entre recargas),
+    // recién ahí se abre el listener de Firestore.
+    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        if (!unsubscribeSnapshot) {
+          unsubscribeSnapshot = iniciarEscucha();
+        }
+      } else {
+        signInAnonymously(auth).catch((error) => {
+          console.error("Error al autenticar Monitor de forma anónima:", error);
+          setLoading(false);
+        });
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
+    };
+  }, []);
+
   const pendientes = retiros.filter(item => item.status === 'waiting');
   const completados = retiros.filter(item => item.status === 'completed');
 
@@ -107,49 +171,6 @@ function Monitor() {
         </div>
       ) : (
         <>
-          {/* SECCIÓN 0: ALERTAS DE SEGURIDAD (tarjetas bloqueadas o no reconocidas) */}
-          {alertas.length > 0 && (
-            <div className="mb-10">
-              <h3 className="text-lg font-bold text-red-700 mb-4 flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-red-600 inline-block animate-pulse"></span>
-                Alertas de Seguridad ({alertas.length})
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {alertas.map((item) => (
-                  <div key={item.id} className="bg-red-50 border-l-8 border-red-600 rounded-xl p-6 shadow-md">
-                    <div className="flex justify-between items-start mb-3">
-                      <span className="bg-red-600 text-white text-xs font-extrabold px-3 py-1 rounded-full uppercase">
-                        {item.status === 'blocked_attempt' ? '🚫 Tarjeta bloqueada' : '❓ Tarjeta no reconocida'}
-                      </span>
-                      <span className="text-xs font-semibold text-red-400 bg-white px-2 py-1 rounded">
-                        {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
-                      </span>
-                    </div>
-
-                    {item.status === 'blocked_attempt' ? (
-                      <>
-                        <h2 className="text-xl font-bold text-red-900 mb-1">{item.studentName || 'Alumno sin identificar'}</h2>
-                        <p className="text-sm text-red-700">
-                          Intentó retirar: <strong>{item.tutorName || 'Apoderado desconocido'}</strong>
-                        </p>
-                        {item.courseId && <p className="text-xs text-red-500 mt-1">{item.courseId}</p>}
-                      </>
-                    ) : (
-                      <>
-                        <h2 className="text-xl font-bold text-red-900 mb-1">Tarjeta no registrada</h2>
-                        <p className="text-sm text-red-700">
-                          Código de tarjeta: <strong>{item.cardNo || '—'}</strong>
-                        </p>
-                        <p className="text-xs text-red-500 mt-1">ID leído: {item.employeeNoString || '—'}</p>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* SECCIÓN 1: EN ESPERA (Tarjetas grandes para los que están en la puerta ahora) */}
           <div className="mb-10">
             <h3 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
@@ -166,10 +187,7 @@ function Monitor() {
                 {pendientes.map((item) => (
                   <div key={item.id} className="bg-white border-l-8 border-redland-secondary rounded-xl p-6 shadow-md flex flex-col justify-between">
                     <div>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-slate-100 text-redland-primary text-xs font-extrabold px-3 py-1 rounded-full border border-slate-200">
-                          {item.courseId || item.grade || item.curso || 'CURSO NO ASIGNADO'}
-                        </span>
+                      <div className="flex justify-end items-start mb-4">
                         <span className="text-xs font-semibold text-slate-400 bg-slate-50 px-2 py-1 rounded">
                           {item.timestamp?.toDate ? item.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Reciente'}
                         </span>
@@ -206,7 +224,6 @@ function Monitor() {
                     <thead className="bg-slate-50 text-slate-500 uppercase text-xs sticky top-0 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4 font-semibold">Hora</th>
-                        <th className="py-3 px-4 font-semibold">Curso</th>
                         <th className="py-3 px-4 font-semibold">Alumno</th>
                         <th className="py-3 px-4 font-semibold">Retirado por</th>
                         <th className="py-3 px-4 font-semibold text-right">Estado</th>
@@ -217,11 +234,6 @@ function Monitor() {
                         <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-3 px-4 font-medium text-slate-600 whitespace-nowrap">
                             {item.deliveredAt?.toDate ? item.deliveredAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-1 rounded-md">
-                              {item.courseId || item.grade || item.curso}
-                            </span>
                           </td>
                           <td className="py-3 px-4 font-bold text-slate-800">
                             {item.studentName || item.nombreAlumno}

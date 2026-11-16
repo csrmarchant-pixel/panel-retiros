@@ -29,7 +29,11 @@ export function AuthProvider({ children }) {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setAuthError('');
 
-      if (!firebaseUser) {
+      // Las sesiones anónimas (el televisor de Monitor, que no tiene login)
+      // no son staff. No hay que buscarlas en staff_junior -su email es null,
+      // eso rompe doc()- ni cerrarles la sesión: es justo la sesión que el
+      // kiosco necesita mantener viva. Simplemente se ignoran acá.
+      if (!firebaseUser || firebaseUser.isAnonymous) {
         setUser(null);
         setRole(null);
         setCourseIds([]);

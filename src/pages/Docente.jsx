@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { toast } from 'react-toastify';
+import { useAuth } from '../contexts/AuthContext';
 
 // Debe calzar con el formato que genera n8n: dd-MM-yyyy en America/Santiago
 function getTodayDateString() {
@@ -18,10 +19,23 @@ function getTodayDateString() {
 }
 
 function Docente() {
+  const { role, courseIds } = useAuth();
+  const esAdmin = role === 'admin';
+  const misCursos = courseIds || [];
+
   const [retiros, setRetiros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filtroCurso, setFiltroCurso] = useState('TODOS');
   const isFirstSnapshot = useRef(true);
+
+  // Un docente con un solo curso no necesita elegir nada: se fija directo.
+  useEffect(() => {
+    if (!esAdmin && misCursos.length === 1) {
+      setFiltroCurso(misCursos[0]);
+    }
+  }, [esAdmin, misCursos]);
+
+  const perteneceAMisCursos = (item) => esAdmin || misCursos.includes(item.courseId);
 
   useEffect(() => {
     const todayQuery = query(
@@ -32,8 +46,7 @@ function Docente() {
     const unsubscribe = onSnapshot(
       todayQuery,
       (snapshot) => {
-        // Evita que la primera carga (con todo lo de hoy) dispare toasts
-        // como si fueran eventos recién ocurridos.
+    
         if (!isFirstSnapshot.current) {
           snapshot.docChanges().forEach((change) => {
             if (change.type === "added") {
@@ -97,18 +110,21 @@ function Docente() {
     }
   };
 
-  const alertasDuplicadas = retiros.filter(item => item.status === 'alert_duplicate');
-  const alertasSeguridad = retiros.filter(item => item.status === 'blocked_attempt' || item.status === 'unrecognized');
-  const todasLasAlertas = [...alertasDuplicadas, ...alertasSeguridad];
-  const pendientes = retiros.filter(item => item.status === 'waiting');
-  const completados = retiros.filter(item => item.status === 'completed');
+  const alertasDuplicadas = retiros.filter(item => item.status === 'alert_duplicate' && perteneceAMisCursos(item));
+  const alertasBloqueadas = retiros.filter(item => item.status === 'blocked_attempt' && perteneceAMisCursos(item));
+  const alertasNoReconocidas = esAdmin ? retiros.filter(item => item.status === 'unrecognized') : [];
+  const todasLasAlertas = [...alertasDuplicadas, ...alertasBloqueadas, ...alertasNoReconocidas];
 
-  const cursosDisponibles = ['TODOS', ...new Set(retiros.map(item => item.courseId || item.grade || item.curso || 'General').filter(Boolean))];
+  const pendientes = retiros.filter(item => item.status === 'waiting' && perteneceAMisCursos(item));
+  const completados = retiros.filter(item => item.status === 'completed' && perteneceAMisCursos(item));
+
+  const cursosDisponibles = esAdmin
+    ? ['TODOS', ...new Set(retiros.map(item => item.courseId).filter(Boolean))]
+    : (misCursos.length > 1 ? ['TODOS', ...misCursos] : []);
 
   const pendientesFiltrados = pendientes.filter(item => {
     if (filtroCurso === 'TODOS') return true;
-    const cursoItem = item.courseId || item.grade || item.curso || 'General';
-    return cursoItem === filtroCurso;
+    return item.courseId === filtroCurso;
   });
 
   return (
@@ -117,10 +133,10 @@ function Docente() {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h2 className="text-2xl font-bold text-redland-primary">Panel de Gestión Docente</h2>
-          <p className="text-slate-500">Administra, despacha y revisa el registro de tu curso</p>
+          <p className="text-slate-500">Administra, despacha los alumnos </p>
         </div>
         
-        {!loading && retiros.length > 0 && (
+        {!loading && cursosDisponibles.length > 0 && (
           <div className="flex flex-wrap bg-white rounded-lg p-1 shadow-sm border border-slate-200">
             {cursosDisponibles.map((curso) => (
               <button
@@ -142,6 +158,11 @@ function Docente() {
       {loading ? (
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-redland-secondary"></div>
+        </div>
+      ) : (!esAdmin && misCursos.length === 0) ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 text-center shadow-sm">
+          <p className="text-amber-800 font-semibold mb-1">No tienes cursos asignados todavía.</p>
+          <p className="text-amber-600 text-sm">Pídele a un administrador que te asigne un curso.</p>
         </div>
       ) : (
         /* LAYOUT DE DOS COLUMNAS: Izquierda (Dashboard principal) | Derecha (Panel de Alertas) */

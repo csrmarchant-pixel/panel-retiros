@@ -12,9 +12,9 @@ function Login() {
     <div className="min-h-[70vh] flex items-center justify-center">
       <div className="bg-white rounded-2xl shadow-lg p-10 max-w-md w-full text-center border border-slate-200">
         <img src="/logo.png" alt="Redland School" className="h-16 w-auto object-contain mx-auto mb-6" />
-        <h1 className="text-xl font-bold text-slate-800 mb-2">Sistema de Retiros — Sección Junior</h1>
+        <h1 className="text-xl font-bold text-slate-800 mb-2">Sistema de Retiros de Alumnos</h1>
         <p className="text-sm text-slate-500 mb-8">
-          Acceso exclusivo para personal autorizado con cuenta institucional.
+          Acceso exclusivo para personal autorizado.
         </p>
 
         <button
@@ -38,7 +38,7 @@ function Login() {
         )}
 
         <p className="mt-6 text-xs text-slate-400">
-          Solo cuentas @redland.cl autorizadas por administración pueden acceder.
+          Solo cuentas @redland.cl autorizadas pueden acceder.
         </p>
       </div>
     </div>
